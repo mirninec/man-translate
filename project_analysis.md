@@ -1,34 +1,135 @@
+# АНАЛИЗ ПРОЕКТА
+
+---
+
+# СТРУКТУРА ПРОЕКТА
+```plain
+.
+|-- install.sh
+|-- LICENSE
+|-- man-translate.sh
+|-- prompt.txt
+`-- README.md
+
+0 directories, 7 files
+
+```
+---
+
+# СОДЕРЖИМОЕ ФАЙЛОВ
+
+## install.sh
+
+```bash
+#!/usr/bin/env bash
+#
+# install.sh
+#
+# Установка man-translate.
+#
+
+set -euo pipefail
+
+
+PREFIX="/usr/local"
+BIN_DIR="$PREFIX/bin"
+SHARE_DIR="$PREFIX/share/man-translate"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+PROGRAM="$SCRIPT_DIR/man-translate.sh"
+PROMPT="$SCRIPT_DIR/prompt.txt"
+
+
+error()
+{
+    echo "Ошибка: $*" >&2
+}
+
+
+if [[ ! -f "$PROGRAM" ]]; then
+    error "Не найден файл программы: $PROGRAM"
+    exit 1
+fi
+
+if [[ ! -f "$PROMPT" ]]; then
+    error "Не найден файл prompt: $PROMPT"
+    exit 1
+fi
+
+if ! command -v sudo >/dev/null; then
+    error "Команда sudo не найдена."
+    exit 1
+fi
+
+if ! command -v install >/dev/null; then
+    error "Команда install не найдена."
+    exit 1
+fi
+
+
+echo "Установка man-translate..."
+echo "Будут обновлены:"
+echo "  $BIN_DIR/man-translate"
+echo "  $SHARE_DIR/prompt.txt"
+
+if ! sudo -v; then
+    error "Не удалось получить права sudo."
+    exit 1
+fi
+
+sudo install -d -m 0755 -- "$BIN_DIR"
+sudo install -d -m 0755 -- "$SHARE_DIR"
+
+sudo install -m 0755 -- "$PROGRAM" \
+    "$BIN_DIR/man-translate"
+
+sudo install -m 0644 -- "$PROMPT" \
+    "$SHARE_DIR/prompt.txt"
+
+
+echo
+echo "Установлено."
+echo
+echo "Программа:"
+echo "    $BIN_DIR/man-translate"
+echo
+echo "Prompt:"
+echo "    $SHARE_DIR/prompt.txt"
+echo
+echo "Использование:"
+echo
+echo "    man-translate scp"
+echo
+echo "Пользовательский prompt можно разместить здесь:"
+echo
+echo "    ~/.config/man-translate/prompt.txt"
+echo
+```
+
+---
+
+## man-translate.sh
+
+```bash
 #!/usr/bin/env bash
 #
 # man-translate
 #
 # Подготовка русской man-страницы для перевода LLM.
 #
-# Версия: 0.3
+# Версия: 0.2
 #
 
 set -euo pipefail
 
-VERSION="0.3"
+VERSION="0.2"
 
 WORKDIR="$HOME/man-ru-translate"
 LANG_DIR="/usr/local/share/man/ru"
 
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-#
-# Каталог с переводами внутри проекта (git-репозиторий).
-#
-# Сюда после успешной установки копируется несжатый перевод,
-# чтобы его можно было закоммитить и не потерять.
-#
-# ВАЖНО: этот путь имеет смысл только тогда, когда скрипт
-# запускается из клонированного репозитория. После установки
-# в /usr/local/bin рядом со скриптом каталога translations нет,
-# поэтому копирование выполняется только если каталог доступен.
-#
-REPO_TRANSLATIONS_DIR="$SCRIPT_DIR/translations"
 
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
@@ -459,51 +560,6 @@ sudo install -m 0644 -- "$TMPFILE" "$TARGET"
 
 
 #
-# Сохранение перевода в репозиторий проекта
-#
-# Копируем НЕсжатый перевод (чистый roff) в каталог
-# translations/ru/manN/имя.N внутри проекта.
-#
-# Хранение в несжатом виде удобно для git:
-#   - видны нормальные диффы;
-#   - переводы можно закоммитить и запушить;
-#   - при переустановке системы install.sh их восстановит.
-#
-# Копирование выполняется только если каталог translations
-# реально доступен для записи. Когда man-translate запущен
-# из /usr/local/bin (после установки), этого каталога рядом
-# нет — тогда шаг просто пропускается с предупреждением.
-#
-
-if [[ -d "$REPO_TRANSLATIONS_DIR" ]] || \
-   [[ -w "$SCRIPT_DIR" ]]
-then
-    REPO_TARGET_DIR="$REPO_TRANSLATIONS_DIR/ru/man$SECTION"
-    REPO_TARGET="$REPO_TARGET_DIR/${NAME}.${SECTION}"
-
-    if mkdir -p "$REPO_TARGET_DIR" 2>/dev/null; then
-        # cp без sudo: репозиторий принадлежит пользователю.
-        cp -- "$OUTFILE" "$REPO_TARGET"
-
-        msg "Перевод сохранён в репозиторий:"
-        echo "  $REPO_TARGET"
-        echo
-        warn "Не забудьте закоммитить и запушить:"
-        echo "  git add translations/"
-        echo "  git commit -m 'Add translation: ${NAME}.${SECTION}'"
-        echo "  git push"
-        echo
-    else
-        warn "Не удалось записать перевод в репозиторий проекта."
-        warn "Каталог: $REPO_TARGET_DIR"
-    fi
-else
-    warn "Каталог translations недоступен (запуск не из репозитория)."
-    warn "Перевод в репозиторий не сохранён — только установлен в систему."
-fi
-
-
-#
 # Обновление базы man
 #
 
@@ -528,3 +584,95 @@ echo "    LANG=ru_RU.UTF-8 man $ENTITY"
 echo
 
 exit 0
+```
+
+---
+
+## prompt.txt
+
+```
+Ты — опытный переводчик технической документации GNU/Linux и специалист по языку roff (man-pages).
+
+Твоя задача — перевести английскую man-страницу на русский язык, сохранив ее полностью работоспособной.
+
+Строго соблюдай следующие правила.
+
+1. Не изменяй разметку roff.
+   - Все макросы (.TH, .SH, .SS, .TP, .IP, .PP, .RS, .RE, .B, .I, .BR, .BI, .RB, .RI, .SM, .nf, .fi, .EX, .EE и т.д.) должны остаться без изменений.
+   - Не удаляй и не добавляй макросы.
+   - Не меняй их порядок.
+
+2. Не изменяй служебные конструкции.
+   - Сохраняй управляющие символы:
+     \-
+     \&
+     \fB
+     \fI
+     \fR
+     \c
+     \e
+     и любые другие roff-последовательности.
+   - Не изменяй комментарии вида:
+     '\"
+
+3. Не переводи:
+   - имена команд;
+   - имена файлов;
+   - параметры команд;
+   - короткие и длинные опции;
+   - регулярные выражения;
+   - переменные окружения;
+   - имена функций;
+   - системные вызовы;
+   - идентификаторы POSIX;
+   - shell-код;
+   - примеры команд;
+   - пути файлов;
+   - URL.
+
+4. Переводи:
+   - обычный английский текст;
+   - описания;
+   - пояснения;
+   - предупреждения;
+   - примечания;
+   - заголовки разделов (.SH и .SS), кроме стандартных имен разделов man.
+
+5. Стандартные разделы переводи следующим образом:
+
+NAME        → ИМЯ
+SYNOPSIS    → СИНТАКСИС
+DESCRIPTION → ОПИСАНИЕ
+OPTIONS     → ПАРАМЕТРЫ
+COMMANDS    → КОМАНДЫ
+FILES       → ФАЙЛЫ
+EXAMPLES    → ПРИМЕРЫ
+ENVIRONMENT → ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+EXIT STATUS → КОД ВЫХОДА
+RETURN VALUE → ВОЗВРАЩАЕМОЕ ЗНАЧЕНИЕ
+ERRORS      → ОШИБКИ
+NOTES       → ПРИМЕЧАНИЯ
+BUGS        → ОШИБКИ
+SEE ALSO    → СМ. ТАКЖЕ
+AUTHORS     → АВТОРЫ
+COPYRIGHT   → АВТОРСКИЕ ПРАВА
+
+6. В разделе NAME оставь имя команды без изменений.
+Например:
+
+.SH ИМЯ
+find \- поиск файлов в иерархии каталогов
+
+7. Не меняй переносы строк без необходимости.
+
+8. Не сокращай текст.
+
+9. Не добавляй никаких комментариев от себя.
+
+10. Вывод должен содержать ТОЛЬКО готовый roff-файл без пояснений.
+
+Если встретишь конструкцию, смысл которой непонятен, не изменяй ее.
+```
+
+---
+
