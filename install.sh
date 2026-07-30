@@ -87,6 +87,78 @@ echo "    $SHARE_DIR/prompt.txt"
 
 
 #
+# Чтобы установленная команда man-translate знала, куда сохранять
+# переводы, ей нужен путь к этому репозиторию. Мы записываем его в
+# файл ~/.config/man-translate/config в виде строки:
+#     REPO=/полный/путь/к/репозиторию
+#
+# Этот способ предпочтительнее правки ~/.bashrc:
+#   • не зависит от используемого shell;
+#   • не требует перезапуска сеанса;
+#   • читается непосредственно man-translate.sh.
+#
+
+CONFIG_DIR="$HOME/.config/man-translate"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+echo
+echo "================================================="
+echo "Настройка репозитория переводов"
+echo "================================================="
+echo
+echo "Каталог этого репозитория:"
+echo "  $SCRIPT_DIR"
+echo
+
+# Смотрим, не записан ли уже путь в конфиг.
+current_repo=""
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    current_repo=$(
+        grep -E '^REPO=' "$CONFIG_FILE" \
+        | head -n1 \
+        | cut -d= -f2- \
+        | sed -e 's/^"//' -e 's/"$//'
+    )
+fi
+
+if [[ "$current_repo" == "$SCRIPT_DIR" ]]; then
+    echo "Репозиторий уже настроен в конфиге:"
+    echo "  $CONFIG_FILE"
+else
+    if [[ -n "$current_repo" ]]; then
+        echo "В конфиге указан другой репозиторий:"
+        echo "  $current_repo"
+        echo
+    fi
+
+    read -rp "Записать текущий путь в конфиг? (y/N): " cfg_answer
+
+    if [[ "$cfg_answer" == "y" ]]; then
+        mkdir -p "$CONFIG_DIR"
+
+        # Удаляем старую строку REPO= (если была) и пишем новую.
+        if [[ -f "$CONFIG_FILE" ]]; then
+            grep -v -E '^REPO=' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" || true
+            mv -- "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+        fi
+
+        echo "REPO=$SCRIPT_DIR" >> "$CONFIG_FILE"
+
+        echo
+        echo "Записано в конфиг:"
+        echo "  $CONFIG_FILE"
+        echo "  REPO=$SCRIPT_DIR"
+    else
+        echo "Конфиг не изменён."
+        echo
+        echo "Позже можно настроить вручную:"
+        echo "  echo 'REPO=$SCRIPT_DIR' > $CONFIG_FILE"
+    fi
+fi
+
+
+#
 # ============================================================
 # Установка готовых переводов из каталога translations
 # ============================================================
@@ -171,8 +243,8 @@ if [[ -d "$TRANSLATIONS_DIR" ]]; then
         translations+=("$f")
     done < <(
         find "$TRANSLATIONS_DIR" \
+            -mindepth 3 -maxdepth 3 \
             -type f \
-            -path '*/man*/*' \
             -print0 \
         | sort -z
     )
@@ -285,4 +357,3 @@ echo "Пользовательский prompt можно разместить з
 echo
 echo "    ~/.config/man-translate/prompt.txt"
 echo
-

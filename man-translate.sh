@@ -4,12 +4,12 @@
 #
 # Подготовка русской man-страницы для перевода LLM.
 #
-# Версия: 0.3
+# Версия: 0.4
 #
 
 set -euo pipefail
 
-VERSION="0.3"
+VERSION="0.4"
 
 WORKDIR="$HOME/man-ru-translate"
 LANG_DIR="/usr/local/share/man/ru"
@@ -18,17 +18,50 @@ SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 #
-# Каталог с переводами внутри проекта (git-репозиторий).
+# Определение каталога репозитория с переводами.
 #
-# Сюда после успешной установки копируется несжатый перевод,
-# чтобы его можно было закоммитить и не потерять.
+# После установки скрипт лежит в /usr/local/bin и оторван
+# от git-клона, поэтому вычислять путь от SCRIPT_DIR нельзя.
+# Путь к репозиторию задаётся явно, по приоритету:
 #
-# ВАЖНО: этот путь имеет смысл только тогда, когда скрипт
-# запускается из клонированного репозитория. После установки
-# в /usr/local/bin рядом со скриптом каталога translations нет,
-# поэтому копирование выполняется только если каталог доступен.
+#   1. Переменная окружения MAN_TRANSLATE_REPO.
+#   2. Строка REPO=... в ~/.config/man-translate/config.
+#   3. Каталог translations рядом со скриптом
+#      (актуально при запуске прямо из клона до установки).
 #
-REPO_TRANSLATIONS_DIR="$SCRIPT_DIR/translations"
+CONFIG_FILE="$HOME/.config/man-translate/config"
+
+REPO_DIR=""
+
+if [[ -n "${MAN_TRANSLATE_REPO:-}" ]]; then
+    # Высший приоритет: переменная окружения.
+    REPO_DIR="$MAN_TRANSLATE_REPO"
+
+elif [[ -f "$CONFIG_FILE" ]]; then
+    # Читаем строку вида: REPO=/home/user/man-translate
+    # grep берёт первую строку REPO=, cut отрезает значение.
+    # Кавычки по краям значения (если есть) убираем через sed.
+    REPO_DIR=$(
+        grep -E '^REPO=' "$CONFIG_FILE" \
+        | head -n1 \
+        | cut -d= -f2- \
+        | sed -e 's/^"//' -e 's/"$//'
+    )
+fi
+
+# Запасной вариант: запуск из клона репозитория.
+if [[ -z "$REPO_DIR" && -d "$SCRIPT_DIR/translations" ]]; then
+    REPO_DIR="$SCRIPT_DIR"
+fi
+
+# Итоговый каталог с переводами внутри репозитория
+# (пустой, если репозиторий определить не удалось).
+if [[ -n "$REPO_DIR" ]]; then
+    REPO_TRANSLATIONS_DIR="$REPO_DIR/translations"
+else
+    REPO_TRANSLATIONS_DIR=""
+fi
+
 
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
@@ -462,45 +495,127 @@ sudo install -m 0644 -- "$TMPFILE" "$TARGET"
 # Сохранение перевода в репозиторий проекта
 #
 # Копируем НЕсжатый перевод (чистый roff) в каталог
-# translations/ru/manN/имя.N внутри проекта.
+# translations/ru/manN/имя.N внутри репозитория.
 #
 # Хранение в несжатом виде удобно для git:
 #   - видны нормальные диффы;
 #   - переводы можно закоммитить и запушить;
 #   - при переустановке системы install.sh их восстановит.
 #
-# Копирование выполняется только если каталог translations
-# реально доступен для записи. Когда man-translate запущен
-# из /usr/local/bin (после установки), этого каталога рядом
-# нет — тогда шаг просто пропускается с предупреждением.
+# Путь к репозиторию определён выше (REPO_TRANSLATIONS_DIR).
+# Если он не задан — шаг пропускается с подсказкой,
+# как настроить репозиторий.
 #
 
-if [[ -d "$REPO_TRANSLATIONS_DIR" ]] || \
-   [[ -w "$SCRIPT_DIR" ]]
-then
+if [[ -n "$REPO_TRANSLATIONS_DIR" ]]; then
+
     REPO_TARGET_DIR="$REPO_TRANSLATIONS_DIR/ru/man$SECTION"
     REPO_TARGET="$REPO_TARGET_DIR/${NAME}.${SECTION}"
 
-    if mkdir -p "$REPO_TARGET_DIR" 2>/dev/null; then
+        if mkdir -p "$REPO_TARGET_DIR" 2>/dev/null; then
         # cp без sudo: репозиторий принадлежит пользователю.
         cp -- "$OUTFILE" "$REPO_TARGET"
 
         msg "Перевод сохранён в репозиторий:"
         echo "  $REPO_TARGET"
         echo
-        warn "Не забудьте закоммитить и запушить:"
-        echo "  git add translations/"
-        echo "  git commit -m 'Add translation: ${NAME}.${SECTION}'"
-        echo "  git push"
-        echo
+
+        #
+        # Предложение закоммитить и запушить изменения.
+        #
+        # Действуем осторожно:
+        #   - git должен быть установлен;
+        #   - REPO_DIR должен быть git-репозиторием;
+        #   - в индекс добавляем ТОЛЬКО файл перевода,
+        #     а не 'git add .' (чтобы не захватить чужие правки);
+        #   - ошибки push не роняют скрипт (set -e обходим).
+        #
+
+        git_hint()
+        {
+            # Показывается, когда авто-commit невозможен
+            # или пользователь отказался.
+            warn "Не забудьте закоммитить и запушить:"
+            echo "  cd $REPO_DIR"
+            echo "  git add translations/"
+            echo "  git commit -m 'Add translation: ${NAME}.${SECTION}'"
+            echo "  git push"
+            echo
+        }
+
+        if ! command -v git >/dev/null 2>&1; then
+            warn "git не установлен — изменения не закоммичены."
+            git_hint
+
+        elif ! git -C "$REPO_DIR" rev-parse --is-inside-work-tree \
+                >/dev/null 2>&1; then
+            warn "Каталог репозитория не является git-репозиторием:"
+            warn "  $REPO_DIR"
+            git_hint
+
+        else
+            read -rp "Закоммитить и запушить изменения? (y/N): " git_answer
+
+            if [[ "$git_answer" == "y" ]]; then
+
+                msg "Коммит изменений..."
+
+                # Добавляем только этот файл перевода.
+                # git -C выполняет команду в каталоге репозитория,
+                # не меняя текущий каталог скрипта.
+                if git -C "$REPO_DIR" add -- "$REPO_TARGET"; then
+
+                    # Коммитим. Если коммитить нечего
+                    # (файл не изменился), git commit вернёт
+                    # ненулевой код — обрабатываем это мягко.
+                    if git -C "$REPO_DIR" commit \
+                        -m "Add translation: ${NAME}.${SECTION}"
+                    then
+                        msg "Коммит создан."
+
+                        msg "Push..."
+
+                        if git -C "$REPO_DIR" push; then
+                            msg "Изменения запушены."
+                        else
+                            warn "Не удалось выполнить push."
+                            warn "Возможные причины: нет remote,"
+                            warn "нет сети или требуется аутентификация."
+                            warn "Выполните вручную: git -C $REPO_DIR push"
+                        fi
+                    else
+                        warn "Коммит не создан"
+                        warn "(возможно, нечего коммитить)."
+                    fi
+                else
+                    error "Не удалось выполнить git add."
+                    git_hint
+                fi
+            else
+                git_hint
+            fi
+        fi
     else
-        warn "Не удалось записать перевод в репозиторий проекта."
-        warn "Каталог: $REPO_TARGET_DIR"
+        warn "Не удалось записать перевод в репозиторий:"
+        warn "  $REPO_TARGET_DIR"
+        warn "Проверьте права доступа к каталогу репозитория."
     fi
+
 else
-    warn "Каталог translations недоступен (запуск не из репозитория)."
-    warn "Перевод в репозиторий не сохранён — только установлен в систему."
+    warn "Репозиторий переводов не настроен —"
+    warn "перевод только установлен в систему, но не сохранён в git."
+    echo
+    warn "Чтобы переводы сохранялись автоматически, укажите путь"
+    warn "к клону репозитория одним из способов:"
+    echo
+    echo "  1) Переменная окружения (например, в ~/.bashrc):"
+    echo "       export MAN_TRANSLATE_REPO=\"$HOME/man-translate\""
+    echo
+    echo "  2) Файл конфигурации ~/.config/man-translate/config:"
+    echo "       REPO=$HOME/man-translate"
+    echo
 fi
+
 
 
 #
