@@ -4,12 +4,12 @@
 #
 # Подготовка русской man-страницы для перевода LLM.
 #
-# Версия: 0.4
+# Версия: 0.5
 #
 
 set -euo pipefail
 
-VERSION="0.4"
+VERSION="0.5"
 
 WORKDIR="$HOME/man-ru-translate"
 LANG_DIR="/usr/local/share/man/ru"
@@ -87,19 +87,329 @@ error()
 }
 
 
+#
+# Проверка зависимостей
+#
+# Определена рано, так как используется в do_sync,
+# который вызывается из диспетчера подкоманд ниже.
+#
+
+require_command()
+{
+    if ! command -v "$1" >/dev/null 2>&1; then
+        error "Не найдена команда: $1"
+        exit 1
+    fi
+}
+
+
+#
+# ============================================================
+# Синхронизация переводов с удалённым репозиторием
+# ============================================================
+#
+# Команда: man-translate sync
+#
+# Двусторонняя синхронизация:
+#   1. Забираем новые переводы с remote (git pull --ff-only)
+#      и устанавливаем изменившиеся страницы в систему.
+#   2. Показываем локальные коммиты, которых нет на remote,
+#      и предлагаем их запушить.
+#
+# Принципы безопасности:
+#   - только неразрушающие git-операции;
+#   - pull строго --ff-only (без авто-merge/rebase);
+#   - при расхождении историй или "грязном" дереве —
+#     останавливаемся и просим разрулить вручную;
+#   - все действия подтверждаются (по умолчанию "нет").
+#
+
+#
+# Установка одной страницы из репозитория в систему.
+# Аналог логики в install.sh: проверка roff, gzip, install.
+#
+# Аргументы: <путь-к-файлу> <секция> <имя-файла>
+#
+sync_install_page()
+{
+    local src="$1"
+    local section="$2"
+    local filename="$3"
+
+    local target_dir="$LANG_DIR/man$section"
+    local target="$target_dir/${filename}.gz"
+
+    if ! groff -mandoc -Tutf8 -- "$src" >/dev/null 2>&1; then
+        error "Ошибка roff, страница пропущена: $src"
+        return 1
+    fi
+
+    local tmp
+    tmp=$(mktemp "${TMPDIR:-/tmp}/man-translate-sync.XXXXXX.gz")
+
+    if ! gzip -9 -c -- "$src" > "$tmp"; then
+        error "Не удалось сжать: $src"
+        rm -f -- "$tmp"
+        return 1
+    fi
+
+    sudo install -d -m 0755 -- "$target_dir"
+    sudo install -m 0644 -- "$tmp" "$target"
+
+    rm -f -- "$tmp"
+
+    echo "  Установлено: $target"
+    return 0
+}
+
+
+#
+# Устанавливает в систему все страницы, изменившиеся между
+# двумя git-ревизиями (old..new) внутри каталога translations.
+#
+# Аргументы: <старая-ревизия> <новая-ревизия>
+#
+sync_install_changed()
+{
+    local old="$1"
+    local new="$2"
+
+    # Относительный путь каталога translations внутри репозитория.
+    # git diff отдаёт пути относительно корня репозитория,
+    # поэтому фильтруем по 'translations/'.
+    local changed
+    changed=$(
+        git -C "$REPO_DIR" diff --name-only --diff-filter=ACMR \
+            "$old" "$new" -- translations/ 2>/dev/null || true
+    )
+
+    if [[ -z "$changed" ]]; then
+        warn "Изменившихся файлов переводов не обнаружено."
+        return 0
+    fi
+
+    echo
+    msg "Установка обновлённых переводов в систему..."
+
+    if ! sudo -v; then
+        error "Не удалось получить права sudo."
+        return 1
+    fi
+
+    local installed=0
+    local skipped=0
+    local rel abs filename mandir section
+
+    while IFS= read -r rel; do
+        [[ -z "$rel" ]] && continue
+
+        abs="$REPO_DIR/$rel"
+
+        # Файл мог быть удалён — устанавливаем только существующие.
+        if [[ ! -f "$abs" ]]; then
+            continue
+        fi
+
+        filename=$(basename "$rel")
+        mandir=$(basename "$(dirname "$rel")")
+        section="${mandir#man}"
+
+        if [[ -z "$section" || "$mandir" == "$section" ]]; then
+            error "Не удалось определить секцию для: $rel"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        if sync_install_page "$abs" "$section" "$filename"; then
+            installed=$((installed + 1))
+        else
+            skipped=$((skipped + 1))
+        fi
+    done <<< "$changed"
+
+    echo
+    echo "Установлено: $installed, пропущено: $skipped"
+
+    if [[ "$installed" -gt 0 ]]; then
+        echo
+        msg "Обновление базы man..."
+        if ! sudo mandb -q; then
+            warn "Не удалось обновить mandb. Выполните: sudo mandb -q"
+        fi
+    fi
+}
+
+
+do_sync()
+{
+    # Проверка зависимостей, нужных именно для sync.
+    require_command git
+    require_command groff
+    require_command gzip
+    require_command mandb
+    require_command sudo
+    require_command mktemp
+    require_command install
+
+    # Репозиторий должен быть определён.
+    if [[ -z "$REPO_DIR" ]]; then
+        error "Репозиторий переводов не настроен."
+        error "См. настройку REPO в ~/.config/man-translate/config"
+        error "или переменную MAN_TRANSLATE_REPO."
+        exit 1
+    fi
+
+    # Каталог должен быть git-репозиторием.
+    if ! git -C "$REPO_DIR" rev-parse --is-inside-work-tree \
+            >/dev/null 2>&1; then
+        error "Каталог не является git-репозиторием:"
+        error "  $REPO_DIR"
+        exit 1
+    fi
+
+    # Рабочее дерево не должно быть "грязным":
+    # незакоммиченные правки в translations/ мешают
+    # безопасному pull/push.
+    if [[ -n "$(git -C "$REPO_DIR" status --porcelain -- translations/)" ]]
+    then
+        error "В каталоге translations есть незакоммиченные изменения."
+        error "Закоммитьте или отмените их перед синхронизацией:"
+        error "  git -C $REPO_DIR status"
+        exit 1
+    fi
+
+    msg "Репозиторий:"
+    echo "  $REPO_DIR"
+    echo
+
+    # Определяем имя текущей ветки.
+    local branch
+    branch=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)
+
+    # Проверяем, что у ветки настроен upstream (remote-ветка).
+    if ! git -C "$REPO_DIR" rev-parse --abbrev-ref \
+            --symbolic-full-name '@{upstream}' >/dev/null 2>&1
+    then
+        error "Для ветки '$branch' не настроен upstream (remote)."
+        error "Настройте, например:"
+        error "  git -C $REPO_DIR push -u origin $branch"
+        exit 1
+    fi
+
+    # Забираем свежую информацию с remote (без изменения файлов).
+    msg "Получение данных с remote (git fetch)..."
+    if ! git -C "$REPO_DIR" fetch; then
+        error "Не удалось выполнить git fetch."
+        error "Проверьте сеть и доступ к репозиторию."
+        exit 1
+    fi
+
+    # Ревизии: локальная, удалённая и точка их расхождения.
+    local local_rev remote_rev base_rev
+    local_rev=$(git -C "$REPO_DIR" rev-parse @)
+    remote_rev=$(git -C "$REPO_DIR" rev-parse '@{upstream}')
+    base_rev=$(git -C "$REPO_DIR" merge-base @ '@{upstream}')
+
+    #
+    # Четыре возможных состояния:
+    #
+    #   local == remote          -> всё синхронизировано
+    #   local == base            -> remote ушёл вперёд (нужен pull)
+    #   remote == base           -> мы ушли вперёд (нужен push)
+    #   иначе                    -> истории разошлись (diverged)
+    #
+
+    if [[ "$local_rev" == "$remote_rev" ]]; then
+        msg "Всё синхронизировано с remote. Новых переводов нет."
+        return 0
+    fi
+
+    # --- Входящие изменения (remote -> локально) ---
+
+    if [[ "$local_rev" == "$base_rev" ]]; then
+        echo
+        msg "На remote есть новые переводы:"
+        echo
+
+        git -C "$REPO_DIR" diff --name-only --diff-filter=ACMR \
+            "$local_rev" "$remote_rev" -- translations/ \
+        | sed 's/^/  /'
+
+        echo
+        read -rp "Загрузить их и установить? (y/N): " ans
+
+        if [[ "$ans" == "y" ]]; then
+            msg "Загрузка (git pull --ff-only)..."
+
+            if git -C "$REPO_DIR" pull --ff-only; then
+                sync_install_changed "$local_rev" "$remote_rev"
+            else
+                error "git pull --ff-only не удался."
+                error "Возможно, истории разошлись — разрулите вручную."
+            fi
+        else
+            echo "Загрузка отменена."
+        fi
+
+        return 0
+    fi
+
+    # --- Исходящие изменения (локально -> remote) ---
+
+    if [[ "$remote_rev" == "$base_rev" ]]; then
+        echo
+        msg "На этой машине есть переводы, которых нет на remote:"
+        echo
+
+        git -C "$REPO_DIR" diff --name-only --diff-filter=ACMR \
+            "$remote_rev" "$local_rev" -- translations/ \
+        | sed 's/^/  /'
+
+        echo
+        read -rp "Залить их на remote (git push)? (y/N): " ans
+
+        if [[ "$ans" == "y" ]]; then
+            msg "Отправка (git push)..."
+
+            if git -C "$REPO_DIR" push; then
+                msg "Изменения запушены."
+            else
+                error "git push не удался."
+                error "Проверьте сеть, доступ и аутентификацию."
+            fi
+        else
+            echo "Отправка отменена."
+        fi
+
+        return 0
+    fi
+
+    # --- Истории разошлись ---
+
+    error "Локальная и удалённая истории разошлись."
+    error "Автоматическая синхронизация небезопасна."
+    error "Разрулите вручную, например:"
+    error "  git -C $REPO_DIR pull --rebase"
+    error "  git -C $REPO_DIR push"
+    exit 1
+}
+
+
 usage()
 {
     cat <<EOF
 
 Использование:
 
-    $SCRIPT_NAME <сущность>
+    $SCRIPT_NAME <сущность>       Перевести и установить man-страницу.
+    $SCRIPT_NAME sync             Синхронизировать переводы с remote.
 
-Пример:
+Примеры:
 
     $SCRIPT_NAME scp
     $SCRIPT_NAME printf
     $SCRIPT_NAME rpc
+    $SCRIPT_NAME sync
 
 EOF
 }
@@ -112,6 +422,12 @@ case "${1:-}" in
         ;;
     --version|-V)
         echo "$SCRIPT_NAME $VERSION"
+        exit 0
+        ;;
+    sync)
+        # Подкоманда синхронизации с remote.
+        # Обрабатывается отдельно и завершает работу скрипта.
+        do_sync
         exit 0
         ;;
 esac
@@ -143,14 +459,6 @@ ENTITY="$1"
 #
 # Проверка зависимостей
 #
-
-require_command()
-{
-    if ! command -v "$1" >/dev/null 2>&1; then
-        error "Не найдена команда: $1"
-        exit 1
-    fi
-}
 
 require_command man
 require_command groff
@@ -512,7 +820,7 @@ if [[ -n "$REPO_TRANSLATIONS_DIR" ]]; then
     REPO_TARGET_DIR="$REPO_TRANSLATIONS_DIR/ru/man$SECTION"
     REPO_TARGET="$REPO_TARGET_DIR/${NAME}.${SECTION}"
 
-        if mkdir -p "$REPO_TARGET_DIR" 2>/dev/null; then
+    if mkdir -p "$REPO_TARGET_DIR" 2>/dev/null; then
         # cp без sudo: репозиторий принадлежит пользователю.
         cp -- "$OUTFILE" "$REPO_TARGET"
 
@@ -643,3 +951,4 @@ echo "    LANG=ru_RU.UTF-8 man $ENTITY"
 echo
 
 exit 0
+
