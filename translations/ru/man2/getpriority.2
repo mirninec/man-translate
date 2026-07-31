@@ -1,0 +1,262 @@
+.\" Copyright (c) 1980, 1991 The Regents of the University of California.
+.\" All rights reserved.
+.\"
+.\" %%%LICENSE_START(BSD_4_CLAUSE_UCB)
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" 3. All advertising materials mentioning features or use of this software
+.\"    must display the following acknowledgement:
+.\"	This product includes software developed by the University of
+.\"	California, Berkeley and its contributors.
+.\" 4. Neither the name of the University nor the names of its contributors
+.\"    may be used to endorse or promote products derived from this software
+.\"    without specific prior written permission.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\" %%%LICENSE_END
+.\"
+.\"     @(#)getpriority.2	6.9 (Berkeley) 3/10/91
+.\"
+.\" Modified 1993-07-24 by Rik Faith <faith@cs.unc.edu>
+.\" Modified 1996-07-01 by Andries Brouwer <aeb@cwi.nl>
+.\" Modified 1996-11-06 by Eric S. Raymond <esr@thyrsus.com>
+.\" Modified 2001-10-21 by Michael Kerrisk <mtk.manpages@gmail.com>
+.\"    Corrected statement under EPERM to clarify privileges required
+.\" Modified 2002-06-21 by Michael Kerrisk <mtk.manpages@gmail.com>
+.\"    Clarified meaning of 0 value for 'who' argument
+.\" Modified 2004-05-27 by Michael Kerrisk <mtk.manpages@gmail.com>
+.\"
+.TH GETPRIORITY 2 2017-09-15 "Linux" "Linux Programmer's Manual"
+.SH ИМЯ
+getpriority, setpriority \- получить/задать приоритет планирования программы
+.SH СИНТАКСИС
+.B #include <sys/time.h>
+.br
+.B #include <sys/resource.h>
+.PP
+.BI "int getpriority(int " which ", id_t " who );
+.br
+.BI "int setpriority(int " which ", id_t " who ", int " prio );
+.SH ОПИСАНИЕ
+Приоритет планирования процесса, группы процессов или пользователя,
+определяемый параметрами
+.I which
+и
+.I who ,
+получается вызовом
+.BR getpriority ()
+и задаётся вызовом
+.BR setpriority ().
+Атрибут процесса, с которым работают эти системные вызовы,
+является тем же атрибутом (также известным как значение «nice»), с которым
+работает
+.BR nice (2).
+.PP
+Значение
+.I which
+должно быть одним из
+.BR PRIO_PROCESS ,
+.BR PRIO_PGRP
+или
+.BR PRIO_USER ,
+а параметр
+.I who
+интерпретируется относительно
+.I which
+(идентификатор процесса для
+.BR PRIO_PROCESS ,
+идентификатор группы процессов для
+.BR PRIO_PGRP
+и идентификатор пользователя для
+.BR PRIO_USER ).
+Нулевое значение
+.I who
+обозначает соответственно вызывающий процесс, группу процессов
+вызывающего процесса или реальный идентификатор пользователя
+вызывающего процесса.
+.PP
+Аргумент
+.I prio
+представляет собой значение в диапазоне от \-20 до 19 (но см. ПРИМЕЧАНИЯ ниже),
+где \-20 соответствует наивысшему приоритету, а 19 — наименьшему приоритету.
+Попытки установить приоритет за пределами этого диапазона
+без уведомления ограничиваются указанным диапазоном.
+Приоритет по умолчанию равен 0;
+меньшие значения дают процессу более высокий приоритет планирования.
+.PP
+Вызов
+.BR getpriority ()
+возвращает наивысший приоритет (наименьшее числовое значение),
+имеющийся у любого из указанных процессов.
+Вызов
+.BR setpriority ()
+устанавливает приоритеты всех указанных процессов
+в указанное значение.
+.PP
+Традиционно только привилегированный процесс мог уменьшить значение nice
+(то есть установить более высокий приоритет).
+Однако начиная с Linux 2.6.12 непривилегированный процесс может уменьшить
+значение nice целевого процесса, имеющего подходящий
+мягкий предел
+.BR RLIMIT_NICE ;
+подробности см. в
+.BR getrlimit (2).
+.SH ВОЗВРАЩАЕМОЕ ЗНАЧЕНИЕ
+При успешном выполнении
+.BR getpriority ()
+возвращает значение nice вызывающего потока, которое может быть отрицательным числом.
+При ошибке возвращается \-1, а переменной
+.I errno
+присваивается значение, указывающее причину ошибки.
+.PP
+Поскольку успешный вызов
+.BR getpriority ()
+может законно вернуть значение \-1, необходимо
+перед вызовом очистить внешнюю переменную
+.I errno ,
+а затем проверить
+.I errno ,
+чтобы определить,
+является ли \-1 признаком ошибки или допустимым значением.
+.PP
+При успешном выполнении
+.BR setpriority ()
+возвращает 0.
+При ошибке возвращается \-1, а переменной
+.I errno
+присваивается значение, указывающее причину ошибки.
+.SH ОШИБКИ
+.TP
+.B EINVAL
+Значение
+.I which
+не было одним из
+.BR PRIO_PROCESS ,
+.BR PRIO_PGRP
+или
+.BR PRIO_USER .
+.TP
+.B ESRCH
+Не найдено ни одного процесса с указанными значениями
+.I which
+и
+.I who .
+.PP
+Помимо перечисленных выше ошибок,
+.BR setpriority ()
+может завершиться ошибкой, если:
+.TP
+.B EACCES
+Вызывающий процесс попытался установить меньшее значение nice
+(то есть более высокий приоритет процесса), но не обладал
+необходимой привилегией (в Linux: не обладал возможностью
+.B CAP_SYS_NICE ).
+.TP
+.B EPERM
+Процесс был найден, но его эффективный идентификатор пользователя не совпадал
+ни с эффективным, ни с реальным идентификатором пользователя вызывающего процесса
+и вызывающий процесс не был привилегирован (в Linux: не обладал возможностью
+.B CAP_SYS_NICE ).
+Но см. ПРИМЕЧАНИЯ ниже.
+.SH СООТВЕТСТВИЕ СТАНДАРТАМ
+POSIX.1-2001, POSIX.1-2008,
+SVr4, 4.4BSD (эти интерфейсы впервые появились в 4.2BSD).
+.SH ПРИМЕЧАНИЯ
+Дополнительные сведения о значении nice см. в
+.BR sched (7).
+.PP
+.IR Примечание :
+добавление возможности «autogroup» в Linux 2.6.38 означает, что
+значение nice во многих случаях больше не оказывает традиционного воздействия.
+Подробности см. в
+.BR sched (7).
+.PP
+Дочерний процесс, созданный с помощью
+.BR fork (2),
+наследует значение nice родительского процесса.
+Значение nice сохраняется при выполнении
+.BR execve (2).
+.PP
+Подробности условия, связанного с
+.B EPERM ,
+зависят от системы.
+Приведённое выше описание соответствует POSIX.1-2001 и, по-видимому,
+соблюдается во всех системах типа System V.
+Ядра Linux до версии 2.6.12 требовали, чтобы реальный или
+эффективный идентификатор пользователя вызывающего процесса совпадал
+с реальным идентификатором пользователя процесса \fIwho\fP
+(а не с его эффективным идентификатором пользователя).
+В Linux 2.6.12 и более поздних версиях требуется,
+чтобы эффективный идентификатор пользователя вызывающего процесса совпадал
+с реальным или эффективным идентификатором пользователя процесса \fIwho\fP.
+Все системы типа BSD (SunOS 4.1.3, Ultrix 4.2,
+4.3BSD, FreeBSD 4.3, OpenBSD-2.5, ...) ведут себя так же,
+как Linux 2.6.12 и более поздние версии.
+.PP
+Включать
+.I <sys/time.h>
+в настоящее время не требуется, но это повышает переносимость.
+(Фактически
+.I <sys/resource.h>
+определяет структуру
+.I rusage
+с полями типа
+.I struct timeval ,
+определённого в
+.IR <sys/time.h> .)
+.\"
+.SS Отличия библиотеки C от ядра
+В ядре значения nice фактически представлены
+диапазоном 40..1
+(поскольку отрицательные числа являются кодами ошибок), и именно эти значения
+используются системными вызовами
+.BR setpriority ()
+и
+.BR getpriority ().
+Функции-обёртки glibc для этих системных вызовов выполняют
+преобразование между представлениями значения nice в пользовательском
+пространстве и ядре по формуле
+.IR "unice\ =\ 20\ \-\ knice" .
+(Таким образом, диапазону ядра 40..1 соответствует
+диапазон \-20..19, видимый в пользовательском пространстве.)
+.SH ОШИБКИ
+Согласно POSIX, значение nice является параметром, задаваемым для процесса.
+Однако в текущей реализации потоков POSIX Linux/NPTL
+значение nice является атрибутом потока:
+разные потоки одного процесса могут иметь разные значения nice.
+Переносимым приложениям следует избегать зависимости от поведения Linux,
+которое в будущем может быть приведено в соответствие со стандартами.
+.SH СМ. ТАКЖЕ
+.BR nice (1),
+.BR renice (1),
+.BR fork (2),
+.BR capabilities (7),
+.BR sched (7)
+.PP
+.I Documentation/scheduler/sched-nice-design.txt
+в дереве исходного кода ядра Linux (начиная с Linux 2.6.23)
+.SH КОЛОФОН
+Эта страница является частью выпуска 5.10 проекта
+.I man-pages
+для Linux.
+Описание проекта,
+сведения о сообщении об ошибках
+и последнюю версию этой страницы
+можно найти по адресу
+\%https://www.kernel.org/doc/man\-pages/.
