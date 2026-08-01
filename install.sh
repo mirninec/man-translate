@@ -352,6 +352,7 @@ echo
 echo "Использование:"
 echo
 echo "    man-translate scp"
+echo "    man-translate write 2"
 echo
 echo "Пользовательский prompt можно разместить здесь:"
 echo

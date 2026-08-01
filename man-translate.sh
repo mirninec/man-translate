@@ -4,12 +4,12 @@
 #
 # Подготовка русской man-страницы для перевода LLM.
 #
-# Версия: 0.5
+# Версия: 0.6
 #
 
 set -euo pipefail
 
-VERSION="0.5"
+VERSION="0.6"
 
 WORKDIR="$HOME/man-ru-translate"
 LANG_DIR="/usr/local/share/man/ru"
@@ -401,15 +401,19 @@ usage()
 
 Использование:
 
-    $SCRIPT_NAME <сущность>       Перевести и установить man-страницу.
-    $SCRIPT_NAME sync             Синхронизировать переводы с remote.
+    $SCRIPT_NAME <сущность> [раздел]   Перевести и установить man-страницу.
+    $SCRIPT_NAME sync                  Синхронизировать переводы с remote.
 
 Примеры:
 
     $SCRIPT_NAME scp
+    $SCRIPT_NAME write 2
     $SCRIPT_NAME printf
     $SCRIPT_NAME rpc
     $SCRIPT_NAME sync
+
+Если раздел не указан, используется страница по умолчанию
+(та, которую выдаёт команда man без номера раздела).
 
 EOF
 }
@@ -446,14 +450,23 @@ trap cleanup EXIT
 #
 # Проверка аргументов
 #
+# Допустимо:
+#   man-translate <сущность>
+#   man-translate <сущность> <раздел>
+#
 
-if [[ $# -ne 1 ]]; then
+if [[ $# -lt 1 || $# -gt 2 ]]; then
     usage
     exit 1
 fi
 
 
 ENTITY="$1"
+SECTION_ARG=""
+
+if [[ $# -eq 2 ]]; then
+    SECTION_ARG="$2"
+fi
 
 
 #
@@ -477,11 +490,29 @@ require_command awk
 # LC_ALL=C нужен, чтобы после установки перевода
 # скрипт не выбирал русскую страницу как исходник.
 #
+# Если указан раздел — передаём его через -s, чтобы
+# выбрать нужную секцию (например, write из раздела 2,
+# а не одноимённую утилиту из раздела 1).
+#
 
-MAN_FILE=$(LC_ALL=C man -w "$ENTITY" 2>/dev/null | sed -n '1p' || true)
+if [[ -n "$SECTION_ARG" ]]; then
+    MAN_FILE=$(
+        LC_ALL=C man -w -s "$SECTION_ARG" "$ENTITY" 2>/dev/null \
+        | sed -n '1p' || true
+    )
+else
+    MAN_FILE=$(
+        LC_ALL=C man -w "$ENTITY" 2>/dev/null \
+        | sed -n '1p' || true
+    )
+fi
 
 if [[ -z "$MAN_FILE" ]]; then
-    error "Man-страница для '$ENTITY' не найдена."
+    if [[ -n "$SECTION_ARG" ]]; then
+        error "Man-страница для '$ENTITY' (раздел $SECTION_ARG) не найдена."
+    else
+        error "Man-страница для '$ENTITY' не найдена."
+    fi
     exit 1
 fi
 
@@ -543,6 +574,14 @@ if [[ -z "$NAME" || -z "$SECTION" || "$NAME" == "$MAN_FILENAME" ]]; then
     error "Не удалось определить имя или секцию man-страницы."
     echo "  Файл: $BASENAME" >&2
     exit 1
+fi
+
+# Если пользователь явно указал раздел, сверяем его с тем,
+# что реально нашли. Несовпадение — признак странного пути
+# или нестандартного имени файла.
+if [[ -n "$SECTION_ARG" && "$SECTION" != "$SECTION_ARG" ]]; then
+    warn "Указан раздел '$SECTION_ARG', но найден файл с секцией '$SECTION'."
+    warn "Будет использована секция из имени файла: $SECTION"
 fi
 
 
@@ -947,8 +986,7 @@ msg "Готово!"
 echo
 echo "Проверьте:"
 echo
-echo "    LANG=ru_RU.UTF-8 man $ENTITY"
+echo "    LANG=ru_RU.UTF-8 man $SECTION $ENTITY"
 echo
 
 exit 0
-
