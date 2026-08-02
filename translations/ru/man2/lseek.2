@@ -1,0 +1,291 @@
+.\" Copyright (c) 1980, 1991 Regents of the University of California.
+.\" and Copyright (c) 2011, Michael Kerrisk <mtk.manpages@gmail.com>
+.\" All rights reserved.
+.\"
+.\" %%%LICENSE_START(BSD_4_CLAUSE_UCB)
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" 3. All advertising materials mentioning features or use of this software
+.\"    must display the following acknowledgement:
+.\"     This product includes software developed by the University of
+.\"     California, Berkeley and its contributors.
+.\" 4. Neither the name of the University nor the names of its contributors
+.\"    may be used to endorse or promote products derived from this software
+.\"    without specific prior written permission.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\" %%%LICENSE_END
+.\"
+.\"     @(#)lseek.2     6.5 (Berkeley) 3/10/91
+.\"
+.\" Modified 1993-07-23 by Rik Faith <faith@cs.unc.edu>
+.\" Modified 1995-06-10 by Andries Brouwer <aeb@cwi.nl>
+.\" Modified 1996-10-31 by Eric S. Raymond <esr@thyrsus.com>
+.\" Modified 1998-01-17 by Michael Haardt
+.\"   <michael@cantor.informatik.rwth-aachen.de>
+.\" Modified 2001-09-24 by Michael Haardt <michael@moria.de>
+.\" Modified 2003-08-21 by Andries Brouwer <aeb@cwi.nl>
+.\" 2011-09-18, mtk, Added SEEK_DATA + SEEK_HOLE
+.\"
+.TH LSEEK 2 2020-08-13 "Linux" "Linux Programmer's Manual"
+.SH ИМЯ
+lseek \- перемещение указателя чтения/записи в файле
+.SH СИНТАКСИС
+.B #include <sys/types.h>
+.br
+.B #include <unistd.h>
+.PP
+.BI "off_t lseek(int " fd ", off_t " offset ", int " whence );
+.SH ОПИСАНИЕ
+.BR lseek ()
+перемещает указатель файлового смещения открытого описания файла,
+связанного с файловым дескриптором
+.I fd
+на величину
+.I offset
+в соответствии с директивой
+.I whence
+следующим образом:
+.TP
+.B SEEK_SET
+Указатель файлового смещения устанавливается в
+.I offset
+байт.
+.TP
+.B SEEK_CUR
+Указатель файлового смещения устанавливается в текущее положение плюс
+.I offset
+байт.
+.TP
+.B SEEK_END
+Указатель файлового смещения устанавливается в размер файла плюс
+.I offset
+байт.
+.PP
+.BR lseek ()
+позволяет установить указатель файлового смещения за конец файла
+(но это не изменяет размер файла).
+Если в эту позицию позже будут записаны данные, то последующие чтения данных
+в промежутке (дыре) будут возвращать нулевые байты (\(aq\e0\(aq), пока
+в эту дыру не будут фактически записаны данные.
+.SS Поиск данных и дыр в файле
+Начиная с версии 3.1, Linux поддерживает следующие дополнительные значения для
+.IR whence :
+.TP
+.B SEEK_DATA
+Перемещает указатель файлового смещения в следующую позицию в файле,
+большую или равную
+.I offset
+и содержащую данные.
+Если
+.I offset
+указывает на данные,
+то указатель файлового смещения устанавливается в
+.IR offset .
+.TP
+.B SEEK_HOLE
+Перемещает указатель файлового смещения в следующую дыру в файле,
+большую или равную
+.IR offset .
+Если
+.I offset
+указывает в середину дыры,
+то указатель файлового смещения устанавливается в
+.IR offset .
+Если после
+.I offset
+нет дыры,
+то указатель файлового смещения перемещается в конец файла
+(т.е. неявная дыра существует в конце любого файла).
+.PP
+В обоих вышеперечисленных случаях
+.BR lseek ()
+завершается ошибкой, если
+.I offset
+указывает за конец файла.
+.PP
+Эти операции позволяют приложениям отображать дыры в разреженном файле.
+Это может быть полезно для таких приложений, как средства резервного копирования,
+которые могут экономить место при создании резервных копий и сохранять дыры,
+если у них есть механизм обнаружения дыр.
+.PP
+Для целей этих операций дыра — это последовательность нулей, которая
+(обычно) не была выделена в нижележащем файловом хранилище.
+Однако файловая система не обязана сообщать о дырах,
+поэтому эти операции не являются гарантированным механизмом для
+отображения пространства хранения, фактически выделенного файлу.
+(Кроме того, последовательность нулей, которая фактически была записана
+в нижележащее хранилище, может не сообщаться как дыра.)
+В простейшей реализации
+файловая система может поддерживать эти операции, заставляя
+.BR SEEK_HOLE
+всегда возвращать смещение конца файла,
+а
+.BR SEEK_DATA
+всегда возвращать
+.IR offset
+(т.е. даже если местоположение, на которое ссылается
+.I offset
+является дырой,
+его можно считать состоящим из данных, представляющих собой последовательность нулей).
+.\" https://lkml.org/lkml/2011/4/22/79
+.\" http://lwn.net/Articles/440255/
+.\" http://blogs.oracle.com/bonwick/entry/seek_hole_and_seek_data
+.PP
+Макрос тестирования возможностей
+.BR _GNU_SOURCE
+должен быть определён для получения определений
+.BR SEEK_DATA
+и
+.BR SEEK_HOLE
+из
+.IR <unistd.h> .
+.PP
+Операции
+.BR SEEK_HOLE
+и
+.BR SEEK_DATA
+поддерживаются для следующих файловых систем:
+.IP * 3
+Btrfs (начиная с Linux 3.1)
+.IP * 3
+OCFS (начиная с Linux 3.2)
+.\" commit 93862d5e1ab875664c6cc95254fc365028a48bb1
+.IP *
+XFS (начиная с Linux 3.5)
+.IP *
+ext4 (начиная с Linux 3.8)
+.IP *
+.BR tmpfs (5)
+(начиная с Linux 3.8)
+.IP *
+NFS (начиная с Linux 3.18)
+.\" commit 1c6dcbe5ceff81c2cf8d929646af675cd59fe7c0
+.\" commit 24bab491220faa446d945624086d838af41d616c
+.IP *
+FUSE (начиная с Linux 4.5)
+.\" commit 0b5da8db145bfd44266ac964a2636a0cf8d7c286
+.IP *
+GFS2 (начиная с Linux 4.15)
+.\" commit 3a27411cb4bc3ce31db228e3569ad01b462a4310
+.SH ВОЗВРАЩАЕМОЕ ЗНАЧЕНИЕ
+При успешном выполнении
+.BR lseek ()
+возвращает результирующее значение смещения, измеряемое в байтах от
+начала файла.
+При ошибке возвращается значение \fI(off_t)\ \-1\fP и
+.I errno
+устанавливается для указания причины ошибки.
+.SH ОШИБКИ
+.TP
+.B EBADF
+.I fd
+не является открытым файловым дескриптором.
+.TP
+.B EINVAL
+Значение
+.I whence
+некорректно.
+Или: результирующее файловое смещение отрицательное
+или выходит за пределы устройства, поддерживающего позиционирование.
+.\" Some systems may allow negative offsets for character devices
+.\" and/or for remote filesystems.
+.TP
+.B ENXIO
+Значение
+.I whence
+равно
+.B SEEK_DATA
+или
+.BR SEEK_HOLE ,
+а
+.I offset
+находится за концом файла, или
+.I whence
+равно
+.B SEEK_DATA
+и
+.I offset
+находится в дыре в конце файла.
+.TP
+.B EOVERFLOW
+.\" HP-UX 11 says EINVAL for this case (but POSIX.1 says EOVERFLOW)
+Результирующее файловое смещение не может быть представлено в
+.IR off_t .
+.TP
+.B ESPIPE
+.I fd
+связан с каналом, сокетом или FIFO.
+.SH СООТВЕТСТВИЕ СТАНДАРТАМ
+POSIX.1-2001, POSIX.1-2008, SVr4, 4.3BSD.
+.PP
+.BR SEEK_DATA
+и
+.BR SEEK_HOLE
+являются нестандартными расширениями, также присутствующими в Solaris,
+FreeBSD и DragonFly BSD;
+они предложены для включения в следующую редакцию POSIX (Issue 8).
+.\" FIXME . Review http://austingroupbugs.net/view.php?id=415 in the future
+.SH ПРИМЕЧАНИЯ
+См.
+.BR open (2)
+для обсуждения связи между файловыми дескрипторами,
+открытыми описаниями файлов и файлами.
+.PP
+Если флаг состояния файла
+.B O_APPEND
+установлен в открытом описании файла,
+то
+.BR write (2)
+.I всегда
+перемещает указатель файлового смещения в конец файла, независимо от использования
+.BR lseek ().
+.PP
+Тип данных
+.I off_t
+представляет собой знаковый целочисленный тип, определённый POSIX.1.
+.PP
+Некоторые устройства не поддерживают позиционирование, и POSIX не определяет, какие
+устройства должны поддерживать
+.BR lseek ().
+.PP
+В Linux использование
+.BR lseek ()
+на устройстве терминала завершается ошибкой
+\fBESPIPE\fP.
+.\" Other systems return the number of written characters,
+.\" using SEEK_SET to set the counter. (Of written characters.)
+.SH СМ. ТАКЖЕ
+.BR dup (2),
+.BR fallocate (2),
+.BR fork (2),
+.BR open (2),
+.BR fseek (3),
+.BR lseek64 (3),
+.BR posix_fallocate (3)
+.SH КОЛОФОН
+Эта страница является частью проекта Linux
+.I man-pages
+версии 5.10.
+Описание проекта,
+информацию об сообщении об ошибках
+и последнюю версию этой страницы
+можно найти по адресу
+\%https://www.kernel.org/doc/man\-pages/.
+
